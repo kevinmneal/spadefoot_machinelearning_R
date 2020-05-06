@@ -1,0 +1,409 @@
+---
+title: "Predicting spadefoot toad environmental niche using random forest and xgboost in R"
+author: "Kevin Neal"
+date: "November 13, 2019"
+updated: "May 1, 2020"
+output: html_notebook
+---
+
+## What is Environmental Niche Modeling (i.e Species Distribution Modeling)?
+- predict habitat suitability or likelihood of occupancy for a species based on known occurrences and environmental data
+- useful for:
+    - predicting new localities
+    - understanding biological niche space and environmental variables that contribute to creating this space
+    - predicting past and future distributions
+  
+- Personal usage: compared model-derived niche space to provide evidence for splitting a species of spadefoot toad into two (Neal et al. 2018)
+    
+
+    
+![Species Distribution Modeling](http://i.imgur.com/EHO6XOf.png?1) 
+ 
+
+
+![Spea hammondii (western spadefoot toad)](http://i.imgur.com/PsRfF6F.jpg?1) 
+
+
+
+__Response variable: binary presence (1) or absence (0) __ 
+
+__Predictor environmental variables: __ 
+Various sources derived from precipitation and temperature, as well as soil and topography
+
+
+
+```{r init, echo=F, include=F}
+library(caret)
+library(xgboost)
+library(dismo)
+library(raster)
+library(randomForest)
+library(gbm)
+library(dplyr)
+library(pals)
+
+# wrangling: crop rasters, spatially subsample points, generate pseudoabsence points, remove correlated variables,
+# ML: run RF, xgboost
+
+
+```
+
+
+### Data wrangling: Filtering presence points
+- First, want to filter points that may lie outside the study area or have erroneous coordinates (e.g. the point is in the ocean)
+- Want a balanced response variable - while spatial samples may accurately reflect species density, more likely it reflects search effort, so we want to filter the points
+- This can be distance/radius-based or based on other aspects of the localities if we have the metadata
+- Here we'll sample points using a grid, with one sample point per grid cell
+
+```{r}
+# load points and rasters, filter points, make background/pseudoabsence points
+# points from GBIF, Bison, iNaturalist, and Shaffer lab collections
+# coords last updated in 2017
+present <- read.csv("speahammondii_combined_presence_points.csv")
+head(present)
+
+#dim(present)
+#dim(unique(present))
+```
+
+
+```{r warning=F}
+socalstack <- stack(list.files(path="./socal_rasters/", pattern="asc$", full.names = TRUE))
+socalfilenames <- list.files(path="./socal_rasters/", pattern="asc$", full.names = FALSE)
+socalnames <- gsub(pattern="_.*asc", replacement="", socalfilenames)
+names(socalstack) <- socalnames
+
+pres.sub <- crop(SpatialPoints(present[,2:3]), socalstack[[1]])
+
+# subsample presence points by a lower-resolution grid
+
+#pres.thin <- gridSample(pres.sub, r=socalstack[[1]])
+pres.thin <- gridSample(pres.sub, r=aggregate(socalstack[[1]], fact=3), n=1)
+
+plot(socalstack[[1]], col=viridis(20), main="Spatially subsampled toad presences")
+points(pres.sub, pch=4, col="red")
+points(pres.thin, pch=20, col="black")
+
+
+
+```
+
+
+### Generating pseudoabsences
+- Don't have "true" absences, but we can generate a sample of points that cover most of the area in question, but with a buffer (2 km or so) around the presence points that is unsampled
+- Spatially filter as above, using a grid
+
+
+```{r warning=F}
+# take a random sample of the background, excluding cells that contain presence points, by masking the raster by the SpatialPoints object
+
+# want a lot of pseudoabsences to get a full representation of the environmental conditions
+# subsample by lower-resolution grid
+
+absent <- randomPoints(mask=mask(aggregate(socalstack[[1]], fact=3), 
+                       buffer(pres.sub, #buffer(SpatialPoints(present[,2:3]), 
+                       width=10000), inverse=T), 
+                       n=nrow(pres.thin), #keeps classes balanced; higher number would lead to imbalanced classes but more coverage of the space of environmental variable combinations in the region
+                       p=SpatialPoints(present[,2:3]), 
+                       excludep=TRUE)
+#nrow(gridSample(absent, socalstack[[1]]))
+
+abs.thin <- gridSample(absent, r=socalstack[[1]])
+```
+
+
+```{r warning=F}
+plot(absent, pch=4, col="red")
+points(abs.thin, col="blue")
+points(pres.thin, col="green")
+#points
+```
+
+
+```{r warning=F}
+# randomly select from the absences equal to presences to have balanced set
+## not needed if n=length(pres.thin) in generating random points
+#set.seed(1)
+#rows_to_sample <- sample(1:nrow(), nrow(pres.thin))
+#abs.thin <- abs.thin[rows_to_sample,] # sample random rows without replacement
+#dim(abs.thin)
+```
+
+### Combine presence and absence points into a single dataframe
+
+
+```{r}
+
+# make dataframes specifying point type (present=1, absent=0) 
+presabs <- dplyr::union(
+  data.frame(pa="present", Longitude=pres.thin[,1], Latitude=pres.thin[,2]), 
+  data.frame(pa="absent", Longitude=abs.thin[,1], Latitude=abs.thin[,2])
+  )
+presabs[,1] <- as.factor(presabs[,1])
+presabs[,1] <- factor(presabs[,1], levels=rev(levels(presabs[,1])))
+head(presabs)
+```
+
+
+### Extract values (predictor variables/features) from environmental layers at each presence and absence point
+
+```{r}
+# drop features related to urbanization - want the "natural" niche of the species
+socalstack <- dropLayer(socalstack, c("canopy", "impervious"))
+
+# extract environmental data at each point
+presabs.envdata <- raster::extract(socalstack, presabs[,2:3])
+presabs.data <- bind_cols(data.frame(presabs), data.frame(presabs.envdata))
+
+# remove rows with missing data (i.e. points that don't fall on the map)
+presabs.data <- presabs.data[complete.cases(presabs.data),]
+
+plot(presabs.data[presabs.data$pa=="present",c(2,3)], col="blue", pch=20)
+points(presabs.data[presabs.data$pa=="absent",c(2,3)], col="red", pch=20)
+
+
+```
+
+### Remove highly correlated features
+- Inclusion of highly correlated features can bias the models and produce misleading feature importances
+- Multiple ways to select features; I'll use findCorrelation in caret to do pairwise removal of variables with spearman's rho above 0.7
+
+```{r}
+# use caret::findCorrelation to remove correlated variables
+# could also use boruta or another mutual information method
+library(corrplot)
+library(gplots)
+
+heatmap.2(abs(cor(presabs.data[,-c(1:3)], method="spearman")), symm=T, col=magma(5), trace="none")
+remove.vars <- findCorrelation(cor(presabs.data[,-c(1:3)], method="spearman"), cutoff=0.7, names=TRUE, verbose=F)
+presabs.data.sel <- presabs.data[, !names(presabs.data) %in% remove.vars] # remove the correlated variables
+```
+
+
+```{r}
+# remove variables from the raster stack
+#socalstack.sub <- subset(socalstack, names(socalstack)[!names(socalstack) %in% remove.vars])
+socalstack_sub <- subset(socalstack, setdiff(names(socalstack), remove.vars))
+names(socalstack_sub)
+# this is the complete dataframe that will be the input in the models
+```
+
+
+```{r}
+```
+
+
+### Exploratory data analysis
+- Qualitatively, do any features show clear discrimination between our two response classes (presence and absence)?
+
+```{r}
+# examine distribution of feature values by class
+featurePlot(x = presabs.data.sel[, -c(1:3)], 
+            y = presabs.data.sel$pa, # must be factor 
+            plot = "box",
+            strip=strip.custom(par.strip.text=list(cex=.7)),
+            scales = list(x = list(relation="free"), 
+                          y = list(relation="free")),
+            auto.key=TRUE)
+```
+
+### Modelling using caret
+- Decision trees have proven to be useful for classification; we'll try two ensemble tree methods: random forest and xgboost and compare the results, using default parameters
+
+
+```{r}
+# run models using caret, starting with xgboost, then ranger/rf
+
+
+xgb_trcontrol = trainControl(
+  method = "repeatedcv",
+  number = 5, 
+  repeats = 2,
+  allowParallel = TRUE,
+  verboseIter = FALSE,
+  returnData = FALSE,
+  classProbs = TRUE,
+  savePredictions = "final",
+  summaryFunction = twoClassSummary #use with metric="ROC" in train(); or use prSummary with AUC
+  #summaryFunction = prSummary
+  #sampling="down"
+)
+```
+
+
+```{r}
+#trainall <- allpts.thin.data
+#trainall[,1] <- make.names(trainall[,1])
+
+modelLookup("xgbTree")
+xgb.grid.large <- expand.grid(nrounds = c(100, 500), # default
+                         eta = c(0.1,0.5), # default
+                         max_depth = c(3,6,9,12),
+                         gamma=0, # default
+                         colsample_bytree=1, # default
+                         min_child_weight=1, # default
+                         subsample=1 # default
+                         )
+
+
+set.seed(99)
+xgb_caret <- train(x=presabs.data.sel[,-c(1:3)],
+                   y=presabs.data.sel[,1],
+                   trControl=xgb_trcontrol,
+                   method="xgbTree",
+                   tuneGrid=xgb.grid.large,
+                   metric="ROC", #"AUC"
+                   #metric="AUC"
+                   importance="permutation")
+
+xgb_caret
+
+```
+
+
+```{r}
+#xgb_caret
+```
+
+
+```{r}
+xgb_predtest_prob <- raster::predict(socalstack_sub, xgb_caret, type="prob") # shows class assignment by default; use type="prob" to show class prob
+xgb_predtest_bin <- raster::predict(socalstack_sub, xgb_caret, type="raw")
+
+par(mar=c(2,2,2,1))
+plot(xgb_predtest_prob, col=magma(20), main="presence probability, XGB") 
+# library(rasterVis)
+# levelplot(xgb_predtest_prob, par.settings=rasterTheme(parula(20)))
+```
+
+
+```{r}
+plot(varImp(xgb_caret, scale=F)) # shows gain by default, analogous to impurity for RF
+```
+
+
+```{r}
+twoClassSummary(data=xgb_caret$pred, lev=levels(xgb_caret$pred$obs))
+prSummary(data=xgb_caret$pred, lev=levels(xgb_caret$pred$obs))
+
+confusionMatrix(xgb_caret)
+```
+
+
+```{r}
+#prSummary(xgb_caret)
+
+```
+
+
+
+
+```{r}
+
+#modelLookup("ranger")
+rf.grid <- expand.grid(
+  mtry = c(3,4,6,12),
+  splitrule = c("gini", "extratrees"),
+  min.node.size = c(2,5,10)
+)
+
+# produced adhoc
+rf.grid.best <- expand.grid(
+  mtry = 3,
+  splitrule = "extratrees",
+  min.node.size = 2
+)
+
+set.seed(99)
+ranger_caret <- train(x=presabs.data.sel[,-c(1:3)],
+                   num.trees=500,
+                   y=presabs.data.sel[,1],
+                   trControl=xgb_trcontrol,
+                   method="ranger",
+                   tuneGrid=rf.grid,
+                   metric="ROC", #"AUC",
+                   #metric="AUC",
+                   importance="permutation")
+
+ranger_caret_best <- train(x=presabs.data.sel[,-c(1:3)],
+                   num.trees=500,
+                   y=presabs.data.sel[,1],
+                   trControl=xgb_trcontrol,
+                   method="ranger",
+                   tuneGrid=rf.grid.best,
+                   metric="ROC", #"AUC",
+                   #metric="AUC",
+                   importance="permutation")
+
+ranger_caret
+```
+
+
+
+```{r}
+ranger_predtest_prob <- raster::predict(socalstack_sub, ranger_caret_best, type="prob")
+ranger_predtest_bin <- raster::predict(socalstack_sub, ranger_caret_best, type="raw")
+
+par(mar=c(2,2,2,1))
+plot(ranger_predtest_prob, col=magma(20), main="presence probability, ranger RF")
+```
+
+
+```{r}
+varImp(ranger_caret_best, scale=F)
+```
+
+
+```{r}
+twoClassSummary(data=ranger_caret_best$pred, lev=levels(ranger_caret$pred$obs))
+prSummary(data=ranger_caret_best$pred, lev=levels(ranger_caret$pred$obs))
+twoClassSummary(data=ranger_caret$pred, lev=levels(ranger_caret$pred$obs))
+prSummary(data=ranger_caret$pred, lev=levels(ranger_caret$pred$obs))
+
+twoClassSummary(data=xgb_caret$pred, lev=levels(xgb_caret$pred$obs))
+prSummary(data=xgb_caret$pred, lev=levels(xgb_caret$pred$obs))
+
+confusionMatrix(xgb_caret)
+
+```
+
+
+```{r}
+confusionMatrix(ranger_caret)
+```
+
+
+
+- RF had a slightly higher ROCAUC and PRAUC than xgboost
+
+
+
+### Visual comparison of predictions
+
+
+```{r fig.width=10, fig.height=10}
+#par(mfrow=c(1,1))
+par(mfrow=c(2,2))
+par(mar=c(2,2,2,1))
+plot(xgb_predtest_prob, col=magma(20), main="presence probability, XGB")
+points(presabs.data.sel[presabs.data.sel$pa=="present",][,c(2,3)])
+plot(ranger_predtest_prob, col=magma(20), main="presence probability, ranger RF")
+points(presabs.data.sel[presabs.data.sel$pa=="present",][,c(2,3)])
+
+plot(2-xgb_predtest_bin, col=magma(20), main="presence (binary), XGB")
+points(presabs.data.sel[presabs.data.sel$pa=="present",][,c(2,3)], col="red")
+plot(2-ranger_predtest_bin, col=magma(20), main="presence (binary), ranger RF")
+points(presabs.data.sel[presabs.data.sel$pa=="present",][,c(2,3)], col="red")
+
+par(mfrow=c(1,1))
+```
+
+```{r}
+results <- resamples(list(XGB=xgb_caret, RF=ranger_caret, RFbest=ranger_caret_best))
+# summarize the distributions
+summary(results)
+# boxplots of results
+bwplot(results)
+```
+
+
