@@ -91,7 +91,7 @@ points(pres.thin, pch=20, col="black")
 
 
 ### Generating pseudoabsences
-- Don't have "true" absences, but we can generate a sample of points that cover most of the area in question, but with a buffer (2 km or so) around the presence points that is unsampled
+- Don't have "true" absences, but we can generate a sample of points that cover most of the area in question, but with a buffer around the presence points that is unsampled
 - Spatially filter as above, using a grid
 
 
@@ -171,19 +171,25 @@ points(presabs.data[presabs.data$pa=="absent",c(2,3)], col="red", pch=20)
 - Multiple ways to select features; I'll use findCorrelation in caret to do pairwise removal of variables with spearman's rho above 0.8
 
 ```{r}
+
+X <- presabs.data[,-c(1:3)]
+y <- presabs.data[,1]
+ycoords <- presabs.data[,c(2:3)]
+
 # use caret::findCorrelation to remove correlated variables
 # could also use boruta or another mutual information method
 library(corrplot)
 library(gplots)
 
-heatmap.2(abs(cor(presabs.data[,-c(1:3)], method="spearman")), symm=T, col=magma(10), trace="none")
-remove.vars <- findCorrelation(cor(presabs.data[,-c(1:3)], method="spearman"), cutoff=0.8, names=TRUE, verbose=F, exact=TRUE)
-presabs.data.sel <- presabs.data[, !names(presabs.data) %in% remove.vars] # remove the correlated variables
+heatmap.2(abs(cor(X, method="spearman")), symm=T, col=magma(10), trace="none")
+remove.vars <- findCorrelation(cor(X, method="spearman"), cutoff=0.8, names=TRUE, verbose=F, exact=TRUE)
+X.sel <- X[, !names(X) %in% remove.vars] # remove the correlated variables
 ```
 
 ```{r}
 #pairs(presabs.data.sel)
-names(presabs.data.sel)[-c(1:3)]
+names(X.sel)
+
 ```
 
 
@@ -191,17 +197,17 @@ names(presabs.data.sel)[-c(1:3)]
 ### findCorrelation is pretty crude. Try Boruta (permuted random forest feature importance)
 
 library(Boruta)
-boruta_results <- Boruta(x=presabs.data.sel[,-c(1:3)],
-                       y=presabs.data.sel[,1],
+boruta_results <- Boruta(x=X.sel,
+                       y=y,
                          doTrace=1,
-                       getImp=getImpExtraGini)
+                       getImp=getImpExtraRaw)
 ```
 
 
 ```{r}
-boruta_remove = names(boruta_results$finalDecision[boruta_results$finalDecision=="Rejected"])
-names(boruta_results$finalDecision[boruta_results$finalDecision=="Confirmed"])
-presabs.data.sel <- presabs.data.sel[, !names(presabs.data.sel) %in% boruta_remove]
+boruta_keep = names(boruta_results$finalDecision[boruta_results$finalDecision=="Confirmed"])
+boruta_keep
+X.sel <- X.sel[, names(X.sel) %in% boruta_keep]
 
 ```
 ```{r}
@@ -215,7 +221,7 @@ plot(boruta_results, las=2)
 ```{r}
 # remove variables from the raster stack
 #socalstack.sub <- subset(socalstack, names(socalstack)[!names(socalstack) %in% remove.vars])
-socalstack_sub <- subset(socalstack, setdiff(names(socalstack), remove.vars))
+socalstack_sub <- subset(socalstack, boruta_keep) #setdiff(names(socalstack), remove.vars))
 names(socalstack_sub)
 # this is the complete dataframe that will be the input in the models
 ```
@@ -230,8 +236,8 @@ names(socalstack_sub)
 
 ```{r}
 # examine distribution of feature values by class
-featurePlot(x = presabs.data.sel[, -c(1:3)], 
-            y = presabs.data.sel$pa, # must be factor 
+featurePlot(x = X.sel, 
+            y = y, # must be factor 
             plot = "box",
             strip=strip.custom(par.strip.text=list(cex=.7)),
             scales = list(x = list(relation="free"), 
@@ -280,8 +286,8 @@ xgb.grid.large <- expand.grid(nrounds = c(100, 500), # default
 
 
 set.seed(99)
-xgb_caret <- train(x=presabs.data.sel[,-c(1:3)],
-                   y=presabs.data.sel[,1],
+xgb_caret <- train(x=X.sel,
+                   y=y,
                    trControl=xgb_trcontrol,
                    method="xgbTree",
                    tuneGrid=xgb.grid.large,
@@ -331,9 +337,9 @@ rf.grid <- expand.grid(
 
 
 set.seed(99)
-ranger_caret <- train(x=presabs.data.sel[,-c(1:3)],
+ranger_caret <- train(x=X.sel,
                    num.trees=500,
-                   y=presabs.data.sel[,1],
+                   y=y,
                    trControl=xgb_trcontrol,
                    method="ranger",
                    tuneGrid=rf.grid,
@@ -426,8 +432,8 @@ xgb.grid.best <- expand.grid(nrounds = xgb_caret$bestTune$nrounds,
                          subsample=xgb_caret$bestTune$subsample # default
                          )
 
-xgb_caret_best <- train(x=presabs.data.sel[,-c(1:3)],
-                   y=presabs.data.sel[,1],
+xgb_caret_best <- train(x=X.sel,
+                   y=y,
                    trControl=xgb_trcontrol_fulltrain,
                    method="xgbTree",
                    tuneGrid=xgb.grid.best,
@@ -448,9 +454,9 @@ rf.grid.best <- expand.grid(
   min.node.size = ranger_caret$bestTune$min.node.size
 )
 
-ranger_caret_best <- train(x=presabs.data.sel[,-c(1:3)],
+ranger_caret_best <- train(x=X.sel,
                    num.trees=500,
-                   y=presabs.data.sel[,1],
+                   y=y,
                    trControl=xgb_trcontrol_fulltrain,
                    method="ranger",
                    tuneGrid=rf.grid.best,
@@ -470,25 +476,22 @@ ranger_predtest_bin <- raster::predict(socalstack_sub, ranger_caret_best, type="
 
 ### Visual comparison of predictions
 
-
 ```{r fig.width=10, fig.height=10}
 #par(mfrow=c(1,1))
 par(mfrow=c(2,2))
 par(mar=c(2,2,2,1))
 plot(xgb_predtest_prob, col=magma(20), main="presence probability, XGB")
-points(presabs.data.sel[presabs.data.sel$pa=="present",][,c(2,3)])
+points(ycoords, col="red")
 plot(ranger_predtest_prob, col=magma(20), main="presence probability, ranger RF")
-points(presabs.data.sel[presabs.data.sel$pa=="present",][,c(2,3)])
+points(ycoords, col="red")
 
 plot(2-xgb_predtest_bin, col=magma(20), main="presence (binary), XGB")
-points(presabs.data.sel[presabs.data.sel$pa=="present",][,c(2,3)], col="red")
+points(ycoords, col="red")
 plot(2-ranger_predtest_bin, col=magma(20), main="presence (binary), ranger RF")
-points(presabs.data.sel[presabs.data.sel$pa=="present",][,c(2,3)], col="red")
+points(ycoords, col="red")
 
 par(mfrow=c(1,1))
 ```
-
-
 
 
 
