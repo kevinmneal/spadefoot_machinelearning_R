@@ -210,10 +210,12 @@ boruta_keep
 X.sel <- X.sel[, names(X.sel) %in% boruta_keep]
 
 ```
+
 ```{r}
 # blue = shadow (permuted) variable
 # green = higher importance than maximum shadow (permuted) variable
 # red = below max shadow importance and should be dropped
+par(mar=c(10,5,1,1))
 plot(boruta_results, las=2)
 ```
 
@@ -481,14 +483,18 @@ ranger_predtest_bin <- raster::predict(socalstack_sub, ranger_caret_best, type="
 par(mfrow=c(2,2))
 par(mar=c(2,2,2,1))
 plot(xgb_predtest_prob, col=magma(20), main="presence probability, XGB")
-points(ycoords, col="red")
+points(ycoords[y=="present",], col="green")
+points(ycoords[y=="absent",], col="red")
 plot(ranger_predtest_prob, col=magma(20), main="presence probability, ranger RF")
-points(ycoords, col="red")
+points(ycoords[y=="present",], col="green")
+points(ycoords[y=="absent",], col="red")
 
 plot(2-xgb_predtest_bin, col=magma(20), main="presence (binary), XGB")
-points(ycoords, col="red")
+points(ycoords[y=="present",], col="green")
+points(ycoords[y=="absent",], col="red")
 plot(2-ranger_predtest_bin, col=magma(20), main="presence (binary), ranger RF")
-points(ycoords, col="red")
+points(ycoords[y=="present",], col="green")
+points(ycoords[y=="absent",], col="red")
 
 par(mfrow=c(1,1))
 ```

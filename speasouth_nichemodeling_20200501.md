@@ -225,14 +225,14 @@ X.sel <- X[, !names(X) %in% remove.vars] # remove the correlated variables
 names(X.sel)
 ```
 
-    ##  [1] "annualPET"                "aridityIndexThornthwaite"
-    ##  [3] "bio03"                    "bio05"                   
+    ##  [1] "aridityIndexThornthwaite" "bio03"                   
+    ##  [3] "bio05"                    "bio09"                   
     ##  [5] "bio13"                    "bio14"                   
     ##  [7] "bio15"                    "bulkdensity5cm"          
     ##  [9] "claycontent5cm"           "depthtobedrockrhorizon"  
     ## [11] "embergerQ"                "minTempWarmest"          
-    ## [13] "PETWettestQuarter"        "siltcontent5cm"          
-    ## [15] "toporuggedness"
+    ## [13] "PETDriestQuarter"         "PETWettestQuarter"       
+    ## [15] "siltcontent5cm"           "toporuggedness"
 
 ``` r
 ### findCorrelation is pretty crude. Try Boruta (permuted random forest feature importance)
@@ -258,13 +258,19 @@ boruta_results <- Boruta(x=X.sel,
                        getImp=getImpExtraRaw)
 ```
 
-    ## After 11 iterations, +1.9 secs:
+    ## After 11 iterations, +2.1 secs:
 
-    ##  confirmed 14 attributes: annualPET, aridityIndexThornthwaite, bio03, bio05, bio13 and 9 more;
+    ##  confirmed 14 attributes: aridityIndexThornthwaite, bio03, bio05, bio09, bio13 and 9 more;
+
+    ##  still have 2 attributes left.
+
+    ## After 39 iterations, +6.4 secs:
+
+    ##  confirmed 1 attribute: bio14;
 
     ##  still have 1 attribute left.
 
-    ## After 44 iterations, +6.8 secs:
+    ## After 85 iterations, +13 secs:
 
     ##  confirmed 1 attribute: depthtobedrockrhorizon;
 
@@ -275,14 +281,14 @@ boruta_keep = names(boruta_results$finalDecision[boruta_results$finalDecision=="
 boruta_keep
 ```
 
-    ##  [1] "annualPET"                "aridityIndexThornthwaite"
-    ##  [3] "bio03"                    "bio05"                   
+    ##  [1] "aridityIndexThornthwaite" "bio03"                   
+    ##  [3] "bio05"                    "bio09"                   
     ##  [5] "bio13"                    "bio14"                   
     ##  [7] "bio15"                    "bulkdensity5cm"          
     ##  [9] "claycontent5cm"           "depthtobedrockrhorizon"  
     ## [11] "embergerQ"                "minTempWarmest"          
-    ## [13] "PETWettestQuarter"        "siltcontent5cm"          
-    ## [15] "toporuggedness"
+    ## [13] "PETDriestQuarter"         "PETWettestQuarter"       
+    ## [15] "siltcontent5cm"           "toporuggedness"
 
 ``` r
 X.sel <- X.sel[, names(X.sel) %in% boruta_keep]
@@ -292,6 +298,7 @@ X.sel <- X.sel[, names(X.sel) %in% boruta_keep]
 # blue = shadow (permuted) variable
 # green = higher importance than maximum shadow (permuted) variable
 # red = below max shadow importance and should be dropped
+par(mar=c(10,5,1,1))
 plot(boruta_results, las=2)
 ```
 
@@ -304,14 +311,14 @@ socalstack_sub <- subset(socalstack, boruta_keep) #setdiff(names(socalstack), re
 names(socalstack_sub)
 ```
 
-    ##  [1] "annualPET"                "aridityIndexThornthwaite"
-    ##  [3] "bio03"                    "bio05"                   
+    ##  [1] "aridityIndexThornthwaite" "bio03"                   
+    ##  [3] "bio05"                    "bio09"                   
     ##  [5] "bio13"                    "bio14"                   
     ##  [7] "bio15"                    "bulkdensity5cm"          
     ##  [9] "claycontent5cm"           "depthtobedrockrhorizon"  
     ## [11] "embergerQ"                "minTempWarmest"          
-    ## [13] "PETWettestQuarter"        "siltcontent5cm"          
-    ## [15] "toporuggedness"
+    ## [13] "PETDriestQuarter"         "PETWettestQuarter"       
+    ## [15] "siltcontent5cm"           "toporuggedness"
 
 ``` r
 # this is the complete dataframe that will be the input in the models
@@ -422,26 +429,26 @@ xgb_caret
     ## Resampling results across tuning parameters:
     ## 
     ##   eta  max_depth  nrounds  AUC        Precision  Recall     F        
-    ##   0.1   3         100      0.7763398  0.7461583  0.7641026  0.7525200
-    ##   0.1   3         500      0.7691969  0.7380203  0.7615385  0.7475035
-    ##   0.1   5         100      0.7719995  0.7511812  0.7743590  0.7603145
-    ##   0.1   5         500      0.7746443  0.7441766  0.7769231  0.7581310
-    ##   0.1   7         100      0.7775282  0.7536105  0.7743590  0.7608609
-    ##   0.1   7         500      0.7777739  0.7588136  0.7666667  0.7599926
-    ##   0.1   9         100      0.7777575  0.7509527  0.7769231  0.7609979
-    ##   0.1   9         500      0.7753455  0.7467552  0.7692308  0.7553962
-    ##   0.1  11         100      0.7718846  0.7472103  0.7794872  0.7608983
-    ##   0.1  11         500      0.7724037  0.7380513  0.7666667  0.7497359
-    ##   0.5   3         100      0.7703545  0.7226122  0.7512821  0.7345117
-    ##   0.5   3         500      0.7642056  0.7282703  0.7615385  0.7419486
-    ##   0.5   5         100      0.7786043  0.7296875  0.7692308  0.7469702
-    ##   0.5   5         500      0.7781908  0.7350216  0.7717949  0.7506677
-    ##   0.5   7         100      0.7764998  0.7461842  0.7769231  0.7586501
-    ##   0.5   7         500      0.7757290  0.7253521  0.7769231  0.7481820
-    ##   0.5   9         100      0.7775669  0.7356821  0.7589744  0.7449589
-    ##   0.5   9         500      0.7767521  0.7336964  0.7717949  0.7491779
-    ##   0.5  11         100      0.7773090  0.7350782  0.7564103  0.7432718
-    ##   0.5  11         500      0.7765384  0.7354641  0.7692308  0.7485112
+    ##   0.1   3         100      0.7802920  0.7524703  0.8000000  0.7731001
+    ##   0.1   3         500      0.7814504  0.7503296  0.7923077  0.7677371
+    ##   0.1   5         100      0.7775202  0.7479210  0.7794872  0.7607144
+    ##   0.1   5         500      0.7806055  0.7564200  0.7769231  0.7640455
+    ##   0.1   7         100      0.7790684  0.7613452  0.7923077  0.7739717
+    ##   0.1   7         500      0.7874797  0.7527468  0.7820513  0.7638836
+    ##   0.1   9         100      0.7865439  0.7664328  0.7743590  0.7675804
+    ##   0.1   9         500      0.7909215  0.7593479  0.7641026  0.7584912
+    ##   0.1  11         100      0.7852958  0.7557505  0.7794872  0.7644330
+    ##   0.1  11         500      0.7870352  0.7565970  0.7692308  0.7597446
+    ##   0.5   3         100      0.7936276  0.7566556  0.7717949  0.7609828
+    ##   0.5   3         500      0.7923096  0.7544997  0.7769231  0.7635167
+    ##   0.5   5         100      0.7818561  0.7410045  0.7589744  0.7473459
+    ##   0.5   5         500      0.7802379  0.7383093  0.7615385  0.7473807
+    ##   0.5   7         100      0.7710730  0.7415014  0.7589744  0.7481825
+    ##   0.5   7         500      0.7765464  0.7454939  0.7769231  0.7593205
+    ##   0.5   9         100      0.7808888  0.7536181  0.7589744  0.7542029
+    ##   0.5   9         500      0.7813374  0.7520212  0.7743590  0.7602551
+    ##   0.5  11         100      0.7856980  0.7504891  0.7615385  0.7537277
+    ##   0.5  11         500      0.7851781  0.7588478  0.7794872  0.7663191
     ## 
     ## Tuning parameter 'gamma' was held constant at a value of 0
     ##  1
@@ -449,7 +456,7 @@ xgb_caret
     ##  1
     ## Tuning parameter 'subsample' was held constant at a value of 1
     ## AUC was used to select the optimal model using the largest value.
-    ## The final values used for the model were nrounds = 100, max_depth = 5,
+    ## The final values used for the model were nrounds = 100, max_depth = 3,
     ##  eta = 0.5, gamma = 0, colsample_bytree = 1, min_child_weight = 1
     ##  and subsample = 1.
 
@@ -510,58 +517,58 @@ ranger_caret
     ## Resampling results across tuning parameters:
     ## 
     ##   mtry  splitrule   min.node.size  AUC        Precision  Recall   
-    ##    3    gini         2             0.8057957  0.7781564  0.7692308
-    ##    3    gini         5             0.8095058  0.7806395  0.7692308
-    ##    3    gini        10             0.8094645  0.7751306  0.7461538
-    ##    3    extratrees   2             0.8111774  0.7522368  0.8051282
-    ##    3    extratrees   5             0.8075571  0.7667263  0.8076923
-    ##    3    extratrees  10             0.8111248  0.7702917  0.7974359
-    ##    4    gini         2             0.8021481  0.7641103  0.7641026
-    ##    4    gini         5             0.8032412  0.7685866  0.7666667
-    ##    4    gini        10             0.8069094  0.7689187  0.7435897
-    ##    4    extratrees   2             0.8118849  0.7629189  0.8000000
-    ##    4    extratrees   5             0.8086911  0.7648278  0.7974359
-    ##    4    extratrees  10             0.8068295  0.7699280  0.7923077
-    ##    7    gini         2             0.8012131  0.7687578  0.7589744
-    ##    7    gini         5             0.8027285  0.7742789  0.7461538
-    ##    7    gini        10             0.8013189  0.7767765  0.7461538
-    ##    7    extratrees   2             0.8047099  0.7559935  0.8025641
-    ##    7    extratrees   5             0.8066796  0.7677002  0.8000000
-    ##    7    extratrees  10             0.8055008  0.7740327  0.7846154
-    ##   15    gini         2             0.7901325  0.7591479  0.7410256
-    ##   15    gini         5             0.7930368  0.7704770  0.7615385
-    ##   15    gini        10             0.7973522  0.7729169  0.7538462
-    ##   15    extratrees   2             0.8026432  0.7591484  0.7820513
-    ##   15    extratrees   5             0.8045353  0.7713595  0.7948718
-    ##   15    extratrees  10             0.8031933  0.7797810  0.7769231
+    ##    4    gini         2             0.8074170  0.7860491  0.7743590
+    ##    4    gini         5             0.8047888  0.7832537  0.7692308
+    ##    4    gini        10             0.8091528  0.7926016  0.7512821
+    ##    4    extratrees   2             0.8080157  0.7634918  0.8051282
+    ##    4    extratrees   5             0.8096885  0.7752549  0.8051282
+    ##    4    extratrees  10             0.8089180  0.7818715  0.7871795
+    ##    5    gini         2             0.8030810  0.7865016  0.7589744
+    ##    5    gini         5             0.8047046  0.7825934  0.7743590
+    ##    5    gini        10             0.8044423  0.7814223  0.7435897
+    ##    5    extratrees   2             0.8113457  0.7754600  0.8000000
+    ##    5    extratrees   5             0.8105226  0.7670817  0.7871795
+    ##    5    extratrees  10             0.8089002  0.7908607  0.7794872
+    ##    8    gini         2             0.7992805  0.7852010  0.7641026
+    ##    8    gini         5             0.8005522  0.7842237  0.7641026
+    ##    8    gini        10             0.7991105  0.7892245  0.7512821
+    ##    8    extratrees   2             0.8026858  0.7708715  0.7897436
+    ##    8    extratrees   5             0.8097606  0.7826051  0.7923077
+    ##    8    extratrees  10             0.8072170  0.7792358  0.7871795
+    ##   16    gini         2             0.7939996  0.7781613  0.7461538
+    ##   16    gini         5             0.7887269  0.7726275  0.7538462
+    ##   16    gini        10             0.7920339  0.7835077  0.7435897
+    ##   16    extratrees   2             0.7993370  0.7764151  0.7871795
+    ##   16    extratrees   5             0.8015223  0.7769410  0.7897436
+    ##   16    extratrees  10             0.8048253  0.7933355  0.7769231
     ##   F        
-    ##   0.7696257
-    ##   0.7715470
-    ##   0.7568761
-    ##   0.7759046
-    ##   0.7843636
-    ##   0.7814165
-    ##   0.7607861
-    ##   0.7643994
-    ##   0.7511080
-    ##   0.7787970
-    ##   0.7785160
-    ##   0.7783252
-    ##   0.7615559
-    ##   0.7553898
-    ##   0.7576480
-    ##   0.7764951
-    ##   0.7807372
-    ##   0.7758861
-    ##   0.7472396
-    ##   0.7635959
-    ##   0.7607015
-    ##   0.7678372
-    ##   0.7803918
-    ##   0.7744365
+    ##   0.7766162
+    ##   0.7722002
+    ##   0.7679035
+    ##   0.7815631
+    ##   0.7867827
+    ##   0.7822078
+    ##   0.7686388
+    ##   0.7749710
+    ##   0.7579390
+    ##   0.7853610
+    ##   0.7737651
+    ##   0.7824517
+    ##   0.7720765
+    ##   0.7707933
+    ##   0.7663573
+    ##   0.7773587
+    ##   0.7848304
+    ##   0.7798694
+    ##   0.7590185
+    ##   0.7597350
+    ##   0.7602220
+    ##   0.7793292
+    ##   0.7805185
+    ##   0.7819519
     ## 
     ## AUC was used to select the optimal model using the largest value.
-    ## The final values used for the model were mtry = 4, splitrule =
+    ## The final values used for the model were mtry = 5, splitrule =
     ##  extratrees and min.node.size = 2.
 
 ``` r
@@ -589,7 +596,7 @@ getTrainPerf(ranger_caret)
 ```
 
     ##    TrainAUC TrainPrecision TrainRecall   TrainF method
-    ## 1 0.8118849      0.7629189         0.8 0.778797 ranger
+    ## 1 0.8113457        0.77546         0.8 0.785361 ranger
 
 ``` r
 # equivalent to:
@@ -604,10 +611,10 @@ confusionMatrix(ranger_caret)
     ##  
     ##           Reference
     ## Prediction present absent
-    ##    present    43.9   13.9
-    ##    absent     11.0   31.2
+    ##    present    43.9   12.9
+    ##    absent     11.0   32.2
     ##                             
-    ##  Accuracy (average) : 0.7511
+    ##  Accuracy (average) : 0.7609
 
 ``` r
 #twoClassSummary(data=ranger_caret$pred, lev=levels(ranger_caret$pred$obs))
@@ -621,7 +628,7 @@ getTrainPerf(xgb_caret)
 ```
 
     ##    TrainAUC TrainPrecision TrainRecall    TrainF  method
-    ## 1 0.7786043      0.7296875   0.7692308 0.7469702 xgbTree
+    ## 1 0.7936276      0.7566556   0.7717949 0.7609828 xgbTree
 
 ``` r
 confusionMatrix(xgb_caret)
@@ -633,10 +640,10 @@ confusionMatrix(xgb_caret)
     ##  
     ##           Reference
     ## Prediction present absent
-    ##    present    42.2   15.8
-    ##    absent     12.7   29.4
+    ##    present    42.3   13.9
+    ##    absent     12.5   31.2
     ##                             
-    ##  Accuracy (average) : 0.7159
+    ##  Accuracy (average) : 0.7356
 
 ``` r
 #twoClassSummary(data=xgb_caret$pred, lev=levels(xgb_caret$pred$obs))
@@ -660,23 +667,23 @@ summary(results)
     ## 
     ## AUC 
     ##          Min.   1st Qu.    Median      Mean   3rd Qu.      Max. NA's
-    ## RF  0.6788524 0.7642945 0.7968090 0.8118849 0.8711055 0.9001120    0
-    ## XGB 0.6740231 0.7320556 0.7774966 0.7786043 0.8154263 0.8885378    0
+    ## RF  0.6906683 0.7613381 0.7878373 0.8113457 0.8677642 0.8952574    0
+    ## XGB 0.6825667 0.7452852 0.8047628 0.7936276 0.8403796 0.8980568    0
     ## 
     ## F 
     ##          Min.   1st Qu.    Median      Mean   3rd Qu.      Max. NA's
-    ## RF  0.7058824 0.7284211 0.7931034 0.7787970 0.8199280 0.8474576    0
-    ## XGB 0.6415094 0.7269116 0.7636364 0.7469702 0.7735043 0.8196721    0
+    ## RF  0.7037037 0.7593103 0.7924528 0.7853610 0.8191721 0.8474576    0
+    ## XGB 0.6538462 0.7103424 0.7727273 0.7609828 0.8038462 0.8518519    0
     ## 
     ## Precision 
     ##          Min.   1st Qu.    Median      Mean   3rd Qu.      Max. NA's
-    ## RF  0.6666667 0.7193750 0.7575758 0.7629189 0.8148148 0.8695652    0
-    ## XGB 0.6296296 0.7089947 0.7272727 0.7296875 0.7646154 0.8076923    0
+    ## RF  0.6785714 0.7363524 0.7857143 0.7754600 0.8204509 0.8461538    0
+    ## XGB 0.6538462 0.7060185 0.7500000 0.7566556 0.8003979 0.9444444    0
     ## 
     ## Recall 
     ##          Min.   1st Qu.    Median      Mean   3rd Qu.      Max. NA's
-    ## RF  0.6923077 0.7692308 0.8076923 0.8000000 0.8461538 0.9615385    0
-    ## XGB 0.6153846 0.7307692 0.7692308 0.7692308 0.8076923 0.9615385    0
+    ## RF  0.6923077 0.7307692 0.8076923 0.8000000 0.8461538 0.9615385    0
+    ## XGB 0.6538462 0.6923077 0.7692308 0.7717949 0.8461538 0.8846154    0
 
 ``` r
 # boxplots of results
@@ -759,14 +766,18 @@ ranger_predtest_bin <- raster::predict(socalstack_sub, ranger_caret_best, type="
 par(mfrow=c(2,2))
 par(mar=c(2,2,2,1))
 plot(xgb_predtest_prob, col=magma(20), main="presence probability, XGB")
-points(ycoords, col="red")
+points(ycoords[y=="present",], col="green")
+points(ycoords[y=="absent",], col="red")
 plot(ranger_predtest_prob, col=magma(20), main="presence probability, ranger RF")
-points(ycoords, col="red")
+points(ycoords[y=="present",], col="green")
+points(ycoords[y=="absent",], col="red")
 
 plot(2-xgb_predtest_bin, col=magma(20), main="presence (binary), XGB")
-points(ycoords, col="red")
+points(ycoords[y=="present",], col="green")
+points(ycoords[y=="absent",], col="red")
 plot(2-ranger_predtest_bin, col=magma(20), main="presence (binary), ranger RF")
-points(ycoords, col="red")
+points(ycoords[y=="present",], col="green")
+points(ycoords[y=="absent",], col="red")
 ```
 
 ![](speasouth_nichemodeling_20200501_files/figure-gfm/unnamed-chunk-29-1.png)<!-- -->
