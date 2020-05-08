@@ -3,12 +3,9 @@ title: Predicting spadefoot toad environmental niche using random forest and xgb
   in R
 author: "Kevin Neal"
 date: "November 13, 2019"
-output:
-  html_document:
-    keep_md: true
-    toc: true
+output: github_document
 ---
-**last updated May 1, 2020**
+*last updated May 7, 2020*
 
 ## What is Environmental Niche Modeling (i.e Species Distribution Modeling)?
 - predict habitat suitability or likelihood of occupancy for a species based on known occurrences and environmental data
@@ -29,9 +26,9 @@ output:
 
 
 
-__Response variable: binary presence (1) or absence (0) __ 
+*Response variable: binary presence (1) or absence (0)* 
 
-__Predictor environmental variables: __ 
+*Predictor environmental variables: *
 Various sources derived from precipitation and temperature, as well as soil and topography
 
 
@@ -82,7 +79,7 @@ pres.sub <- crop(SpatialPoints(present[,2:3]), socalstack[[1]])
 # subsample presence points by a lower-resolution grid
 
 #pres.thin <- gridSample(pres.sub, r=socalstack[[1]])
-pres.thin <- gridSample(pres.sub, r=aggregate(socalstack[[1]], fact=3), n=1)
+pres.thin <- gridSample(pres.sub, r=aggregate(socalstack[[1]], fact=4), n=1)
 
 plot(socalstack[[1]], col=viridis(20), main="Spatially subsampled toad presences")
 points(pres.sub, pch=4, col="red")
@@ -103,11 +100,11 @@ points(pres.thin, pch=20, col="black")
 
 # want a lot of pseudoabsences to get a full representation of the environmental conditions
 # subsample by lower-resolution grid
-
-absent <- randomPoints(mask=mask(aggregate(socalstack[[1]], fact=2), 
+set.seed(99)
+absent <- randomPoints(mask=mask(aggregate(socalstack[[1]], fact=4), 
                        buffer(pres.sub, #buffer(SpatialPoints(present[,2:3]), 
-                       width=10000), inverse=T), 
-                       n=nrow(pres.thin), #keeps classes balanced; higher number would lead to imbalanced classes but more coverage of the space of environmental variable combinations in the region
+                       width=6000), inverse=T), 
+                       n=nrow(pres.thin), #consider making imbalanced to allow for wider coverage of the space of environmental variable combinations in the region
                        p=SpatialPoints(present[,2:3]), 
                        excludep=TRUE)
 #nrow(gridSample(absent, socalstack[[1]]))
@@ -118,7 +115,7 @@ abs.thin <- gridSample(absent, r=socalstack[[1]])
 
 ```{r warning=F}
 plot(absent, pch=4, col="red")
-points(abs.thin, col="blue")
+#points(abs.thin, col="blue")
 points(pres.thin, col="green")
 #points
 ```
@@ -130,7 +127,8 @@ points(pres.thin, col="green")
 #set.seed(1)
 #rows_to_sample <- sample(1:nrow(), nrow(pres.thin))
 #abs.thin <- abs.thin[rows_to_sample,] # sample random rows without replacement
-#dim(abs.thin)
+dim(abs.thin)
+dim(pres.thin)
 ```
 
 ### Combine presence and absence points into a single dataframe
@@ -170,7 +168,7 @@ points(presabs.data[presabs.data$pa=="absent",c(2,3)], col="red", pch=20)
 
 ### Remove highly correlated features
 - Inclusion of highly correlated features can bias the models and produce misleading feature importances
-- Multiple ways to select features; I'll use findCorrelation in caret to do pairwise removal of variables with spearman's rho above 0.7
+- Multiple ways to select features; I'll use findCorrelation in caret to do pairwise removal of variables with spearman's rho above 0.8
 
 ```{r}
 # use caret::findCorrelation to remove correlated variables
@@ -178,9 +176,39 @@ points(presabs.data[presabs.data$pa=="absent",c(2,3)], col="red", pch=20)
 library(corrplot)
 library(gplots)
 
-heatmap.2(abs(cor(presabs.data[,-c(1:3)], method="spearman")), symm=T, col=magma(5), trace="none")
-remove.vars <- findCorrelation(cor(presabs.data[,-c(1:3)], method="spearman"), cutoff=0.7, names=TRUE, verbose=F)
+heatmap.2(abs(cor(presabs.data[,-c(1:3)], method="spearman")), symm=T, col=magma(10), trace="none")
+remove.vars <- findCorrelation(cor(presabs.data[,-c(1:3)], method="spearman"), cutoff=0.8, names=TRUE, verbose=F, exact=TRUE)
 presabs.data.sel <- presabs.data[, !names(presabs.data) %in% remove.vars] # remove the correlated variables
+```
+
+```{r}
+#pairs(presabs.data.sel)
+names(presabs.data.sel)[-c(1:3)]
+```
+
+
+```{r}
+### findCorrelation is pretty crude. Try Boruta (permuted random forest feature importance)
+
+library(Boruta)
+boruta_results <- Boruta(x=presabs.data.sel[,-c(1:3)],
+                       y=presabs.data.sel[,1],
+                         doTrace=1,
+                       getImp=getImpExtraGini)
+```
+
+
+```{r}
+boruta_remove = names(boruta_results$finalDecision[boruta_results$finalDecision=="Rejected"])
+names(boruta_results$finalDecision[boruta_results$finalDecision=="Confirmed"])
+presabs.data.sel <- presabs.data.sel[, !names(presabs.data.sel) %in% boruta_remove]
+
+```
+```{r}
+# blue = shadow (permuted) variable
+# green = higher importance than maximum shadow (permuted) variable
+# red = below max shadow importance and should be dropped
+plot(boruta_results, las=2)
 ```
 
 
@@ -222,7 +250,7 @@ featurePlot(x = presabs.data.sel[, -c(1:3)],
 xgb_trcontrol = trainControl(
   method = "repeatedcv",
   number = 5, 
-  repeats = 2,
+  repeats = 3,
   allowParallel = TRUE,
   verboseIter = FALSE,
   returnData = FALSE,
@@ -239,10 +267,11 @@ xgb_trcontrol = trainControl(
 #trainall <- allpts.thin.data
 #trainall[,1] <- make.names(trainall[,1])
 
+
 modelLookup("xgbTree")
 xgb.grid.large <- expand.grid(nrounds = c(100, 500), # default
-                         eta = c(0.1,0.5), # default
-                         max_depth = c(3,6,9,11),
+                         eta = c(0.1, 0.5), # default
+                         max_depth = c(3,5,7,9,11),
                          gamma=0, # default
                          colsample_bytree=1, # default
                          min_child_weight=1, # default
@@ -266,7 +295,7 @@ xgb_caret
 
 
 ```{r}
-
+ggplot(xgb_caret)
 ```
 
 
@@ -282,26 +311,20 @@ plot(varImp(xgb_caret, scale=F)) # permutation importance
 ```
 
 
-```{r}
-twoClassSummary(data=xgb_caret$pred, lev=levels(xgb_caret$pred$obs))
-prSummary(data=xgb_caret$pred, lev=levels(xgb_caret$pred$obs))
-
-confusionMatrix(xgb_caret)
-```
-
-
-```{r}
-#prSummary(xgb_caret)
-
-```
-
-
-
 
 ```{r}
 #modelLookup("ranger")
+
+p = length(names(socalstack_sub))
+mtrys = c(
+  floor(sqrt(p)),
+  floor(p*0.33),
+  floor(p*0.5),
+  p
+)
+
 rf.grid <- expand.grid(
-  mtry = c(3,4,5,11),
+  mtry = mtrys, #c(3,4,5,11),
   splitrule = c("gini", "extratrees"),
   min.node.size = c(2,5,10)
 )
@@ -323,6 +346,7 @@ ranger_caret
 
 
 ```{r}
+ggplot(ranger_caret)
 ```
 
 
@@ -336,41 +360,48 @@ ranger_caret
 plot(varImp(ranger_caret, scale=F))
 ```
 
+## Get mean AUC, precision, recall, F1 for cross-validation folds
+
+### ranger:
 
 ```{r}
-print("ranger:")
-twoClassSummary(data=ranger_caret$pred, lev=levels(ranger_caret$pred$obs))
-prSummary(data=ranger_caret$pred, lev=levels(ranger_caret$pred$obs))
 
-print("xgboost:")
-twoClassSummary(data=xgb_caret$pred, lev=levels(xgb_caret$pred$obs))
-prSummary(data=xgb_caret$pred, lev=levels(xgb_caret$pred$obs))
-```
+getTrainPerf(ranger_caret)
+# equivalent to:
+# apply(ranger_caret$resample[,-5], 2, "mean")
 
-
-```{r}
-#confusionMatrix(ranger_caret$pred$pred, ranger_caret$pred$obs, positive="present", mode="everything")
-```
-
-
-```{r}
-print("ranger confusion matrix:")
 confusionMatrix(ranger_caret)
-confusionMatrix(ranger_caret$pred$pred, ranger_caret$pred$obs, positive="present", mode="everything")
+#twoClassSummary(data=ranger_caret$pred, lev=levels(ranger_caret$pred$obs))
+#prSummary(data=ranger_caret$pred, lev=levels(ranger_caret$pred$obs))
+```
 
+### xgboost:
 
-print("xgboost confusion matrix:")
+```{r}
+
+getTrainPerf(xgb_caret)
 confusionMatrix(xgb_caret)
-confusionMatrix(xgb_caret$pred$pred, xgb_caret$pred$obs, positive="present", mode="everything")
+#twoClassSummary(data=xgb_caret$pred, lev=levels(xgb_caret$pred$obs))
+#prSummary(data=xgb_caret$pred, lev=levels(xgb_caret$pred$obs))
+```
 
+### boxplots of cross-validation folds for both models:
 
+```{r}
+results <- resamples(list(RF=ranger_caret, XGB=xgb_caret))
+# summarize the distributions
+summary(results)
+# boxplots of results
+bwplot(results)
 ```
 
 
+- RF and XGBoost perform pretty similarly in cross-validation
 
-- RF (ranger) had a slightly higher ROCAUC, PRAUC, and F1 than xgboost
 
-### Re-train models on full dataset and do predictions on the rasters
+
+
+## Re-train models on full dataset and do predictions on the rasters
 
 ```{r}
 xgb_trcontrol_fulltrain = trainControl(
@@ -386,13 +417,13 @@ xgb_trcontrol_fulltrain = trainControl(
 )
 
 set.seed(99)
-xgb.grid.best <- expand.grid(nrounds = 100,
-                         eta = 0.1,
-                         max_depth = 11,
-                         gamma=0, # default
-                         colsample_bytree=1, # default
-                         min_child_weight=1, # default
-                         subsample=1 # default
+xgb.grid.best <- expand.grid(nrounds = xgb_caret$bestTune$nrounds,
+                         eta = xgb_caret$bestTune$eta,
+                         max_depth = xgb_caret$bestTune$max_depth,
+                         gamma=xgb_caret$bestTune$gamma, # default
+                         colsample_bytree=xgb_caret$bestTune$colsample_bytree, # default
+                         min_child_weight=xgb_caret$bestTune$min_child_weight, # default
+                         subsample=xgb_caret$bestTune$subsample # default
                          )
 
 xgb_caret_best <- train(x=presabs.data.sel[,-c(1:3)],
@@ -412,9 +443,9 @@ xgb_predtest_bin <- raster::predict(socalstack_sub, xgb_caret_best, type="raw")
 
 
 rf.grid.best <- expand.grid(
-  mtry = 3,
-  splitrule = "extratrees",
-  min.node.size = 2
+  mtry = ranger_caret$bestTune$mtry,
+  splitrule = ranger_caret$bestTune$splitrule,
+  min.node.size = ranger_caret$bestTune$min.node.size
 )
 
 ranger_caret_best <- train(x=presabs.data.sel[,-c(1:3)],
@@ -457,12 +488,12 @@ points(presabs.data.sel[presabs.data.sel$pa=="present",][,c(2,3)], col="red")
 par(mfrow=c(1,1))
 ```
 
-```{r}
-results <- resamples(list(RF=ranger_caret, XGB=xgb_caret))
-# summarize the distributions
-summary(results)
-# boxplots of results
-bwplot(results)
-```
 
+
+
+
+```{r}
+# session info
+sessionInfo()
+```
 
